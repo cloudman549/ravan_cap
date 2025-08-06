@@ -13,15 +13,16 @@ app.config['JSON_AS_ASCII'] = False  # Hindi/Unicode support
 client = MongoClient("mongodb+srv://ravan_ext:Cloudman%40100@cluster0.cpuhyo1.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
 db = client["license_db"]
 licenses_col = db["licenses"]
-tokens_col = db["tokens"]  # New collection for tokens
+tokens_col = db["tokens"]
+
+# ✅ MongoDB Indexing (only runs if not already present)
+licenses_col.create_index("key")
+tokens_col.create_index("token")
 
 # ✅ TrueCaptcha credentials
 TRUECAPTCHA_USERID = "Cloudman"
 TRUECAPTCHA_APIKEY = "rWYgC77DnQ259l5eDSH6"
 
-# ==========================
-# ✅ Endpoint: /generate-token
-# ==========================
 @app.route('/generate-token', methods=['POST'])
 def generate_token():
     data = request.get_json()
@@ -39,15 +40,12 @@ def generate_token():
     if not lic.get("paid", False):
         return jsonify({"success": False, "message": "License is unpaid"}), 403
 
-    # MAC binding check
     if lic.get("mac") not in ["", device_id]:
         return jsonify({"success": False, "message": "License bound to another device"}), 403
 
-    # Bind MAC if first time
     if lic.get("mac", "") == "":
         licenses_col.update_one({"key": license_key}, {"$set": {"mac": device_id}})
 
-    # Create token
     token = str(uuid.uuid4())
     tokens_col.insert_one({
         "token": token,
@@ -59,9 +57,6 @@ def generate_token():
 
     return jsonify({"success": True, "authToken": token}), 200
 
-# ==========================
-# ✅ Endpoint: /solve-truecaptcha
-# ==========================
 @app.route('/solve-truecaptcha', methods=['POST'])
 def solve_truecaptcha():
     token = request.headers.get('X-Auth-Token')
@@ -94,8 +89,6 @@ def solve_truecaptcha():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ==========================
-# ✅ Run App
-# ==========================
-if __name__ == '__main__':
-    app.run(port=5001, debug=True)
+# ❌ Do not run app manually on Vercel
+# if __name__ == '__main__':
+#     app.run(port=5001, debug=True)
