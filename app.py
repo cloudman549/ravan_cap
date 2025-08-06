@@ -1,9 +1,10 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pymongo import MongoClient
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 import requests
+import redis
 
 app = Flask(__name__)
 CORS(app)
@@ -13,11 +14,12 @@ app.config['JSON_AS_ASCII'] = False  # Hindi/Unicode support
 client = MongoClient("mongodb+srv://ravan_ext:Cloudman%40100@cluster0.cpuhyo1.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
 db = client["license_db"]
 licenses_col = db["licenses"]
-tokens_col = db["tokens"]
 
-# ✅ MongoDB Indexing (only runs if not already present)
-licenses_col.create_index("key")
-tokens_col.create_index("token")
+# ✅ Redis Upstash connection
+redis_client = redis.from_url(
+    "rediss://default:AVQfAAIjcDFjMDkzNTRhZTU0YTg0ZDRiOGViYTVjMjQwNTk3MmRlMnAxMA@integral-parakeet-21535.upstash.io:6379",
+    decode_responses=True
+)
 
 # ✅ TrueCaptcha credentials
 TRUECAPTCHA_USERID = "Cloudman"
@@ -47,13 +49,7 @@ def generate_token():
         licenses_col.update_one({"key": license_key}, {"$set": {"mac": device_id}})
 
     token = str(uuid.uuid4())
-    tokens_col.insert_one({
-        "token": token,
-        "license_key": license_key,
-        "device_id": device_id,
-        "created_at": datetime.utcnow(),
-        "used": False
-    })
+    redis_client.setex(f"token:{token}", timedelta(minutes=10), device_id)
 
     return jsonify({"success": True, "authToken": token}), 200
 
@@ -63,8 +59,8 @@ def solve_truecaptcha():
     if not token:
         return jsonify({"error": "Missing auth token"}), 401
 
-    token_doc = tokens_col.find_one({"token": token})
-    if not token_doc:
+    device_id = redis_client.get(f"token:{token}")
+    if not device_id:
         return jsonify({"error": "Invalid or expired token"}), 403
 
     data = request.get_json()
@@ -88,7 +84,3 @@ def solve_truecaptcha():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-# ❌ Do not run app manually on Vercel
-# if __name__ == '__main__':
-#     app.run(port=5001, debug=True)
