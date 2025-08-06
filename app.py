@@ -1,10 +1,9 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pymongo import MongoClient
-from datetime import datetime, timedelta
+from datetime import datetime
 import uuid
 import requests
-import redis
 
 app = Flask(__name__)
 CORS(app)
@@ -14,13 +13,11 @@ app.config['JSON_AS_ASCII'] = False  # Hindi/Unicode support
 client = MongoClient("mongodb+srv://ravan_ext:Cloudman%40100@cluster0.cpuhyo1.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
 db = client["license_db"]
 licenses_col = db["licenses"]
-tokens_col = db["tokens"]  # ✅ Token store collection
+tokens_col = db["tokens"]
 
-# ✅ Redis Upstash connection
-redis_client = redis.from_url(
-    "rediss://default:AVQfAAIjcDFjMDkzNTRhZTU0YTg0ZDRiOGViYTVjMjQwNTk3MmRlMnAxMA@integral-parakeet-21535.upstash.io:6379",
-    decode_responses=True
-)
+# ✅ MongoDB Indexing (only runs if not already present)
+licenses_col.create_index("key")
+tokens_col.create_index("token")
 
 # ✅ TrueCaptcha credentials
 TRUECAPTCHA_USERID = "Cloudman"
@@ -50,16 +47,12 @@ def generate_token():
         licenses_col.update_one({"key": license_key}, {"$set": {"mac": device_id}})
 
     token = str(uuid.uuid4())
-
-    # ✅ Redis store
-    redis_client.setex(f"token:{token}", timedelta(minutes=10), device_id)
-
-    # ✅ MongoDB store also (for compatibility with extension)
     tokens_col.insert_one({
         "token": token,
+        "license_key": license_key,
         "device_id": device_id,
         "created_at": datetime.utcnow(),
-        "expires_at": datetime.utcnow() + timedelta(minutes=10)
+        "used": False
     })
 
     return jsonify({"success": True, "authToken": token}), 200
@@ -70,16 +63,9 @@ def solve_truecaptcha():
     if not token:
         return jsonify({"error": "Missing auth token"}), 401
 
-    # ✅ Check in Redis
-    device_id = redis_client.get(f"token:{token}")
-
-    # ❓ If not found in Redis, fallback to MongoDB
-    if not device_id:
-        token_doc = tokens_col.find_one({"token": token})
-        if token_doc and token_doc.get("expires_at", datetime.utcnow()) > datetime.utcnow():
-            device_id = token_doc["device_id"]
-        else:
-            return jsonify({"error": "Invalid or expired token"}), 403
+    token_doc = tokens_col.find_one({"token": token})
+    if not token_doc:
+        return jsonify({"error": "Invalid or expired token"}), 403
 
     data = request.get_json()
     image_content = data.get('imageContent')
@@ -102,3 +88,7 @@ def solve_truecaptcha():
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+# ❌ Do not run app manually on Vercel
+# if __name__ == '__main__':
+#     app.run(port=5001, debug=True)
