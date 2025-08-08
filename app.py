@@ -18,7 +18,8 @@ tokens_col = db["tokens"]
 # ✅ MongoDB Indexing (only runs if not already present)
 licenses_col.create_index("key")
 tokens_col.create_index("token")
-tokens_col.create_index("created_at", expireAfterSeconds=120)  # TTL index to auto-delete tokens after 15 minutes
+tokens_col.drop_index("created_at_1")  # Ensure old TTL index is dropped (only first time)
+tokens_col.create_index("created_at", expireAfterSeconds=120)  # TTL index to auto-delete tokens after 2 minutes
 
 # ✅ TrueCaptcha credentials
 TRUECAPTCHA_USERID = "Cloudman"
@@ -47,12 +48,15 @@ def generate_token():
     if lic.get("mac", "") == "":
         licenses_col.update_one({"key": license_key}, {"$set": {"mac": device_id}})
 
+    # ✅ Remove old tokens for same license (one token per license)
+    tokens_col.delete_many({"license_key": license_key})
+
     token = str(uuid.uuid4())
     tokens_col.insert_one({
         "token": token,
         "license_key": license_key,
         "device_id": device_id,
-        "created_at": datetime.utcnow(),  # Required for TTL to work
+        "created_at": datetime.utcnow(),  # ✅ ISO UTC DateTime (required for TTL)
         "used": False
     })
 
