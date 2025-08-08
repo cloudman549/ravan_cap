@@ -18,6 +18,7 @@ tokens_col = db["tokens"]
 # ✅ MongoDB Indexing (only runs if not already present)
 licenses_col.create_index("key")
 tokens_col.create_index("token")
+tokens_col.create_index("created_at", expireAfterSeconds=120)  # TTL index to auto-delete tokens after 15 minutes
 
 # ✅ TrueCaptcha credentials
 TRUECAPTCHA_USERID = "Cloudman"
@@ -51,7 +52,7 @@ def generate_token():
         "token": token,
         "license_key": license_key,
         "device_id": device_id,
-        "created_at": datetime.utcnow(),
+        "created_at": datetime.utcnow(),  # Required for TTL to work
         "used": False
     })
 
