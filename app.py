@@ -15,11 +15,10 @@ db = client["license_db"]
 licenses_col = db["licenses"]
 tokens_col = db["tokens"]
 
-# ✅ MongoDB Indexing (only runs if not already present)
+# ✅ MongoDB Indexing
 licenses_col.create_index("key")
 tokens_col.create_index("token")
-tokens_col.drop_index("created_at_1")  # Ensure old TTL index is dropped (only first time)
-tokens_col.create_index("created_at", expireAfterSeconds=120)  # TTL index to auto-delete tokens after 2 minutes
+tokens_col.create_index("created_at", expireAfterSeconds=120)  # TTL index for 2 mins
 
 # ✅ TrueCaptcha credentials
 TRUECAPTCHA_USERID = "Cloudman"
@@ -48,15 +47,16 @@ def generate_token():
     if lic.get("mac", "") == "":
         licenses_col.update_one({"key": license_key}, {"$set": {"mac": device_id}})
 
-    # ✅ Remove old tokens for same license (one token per license)
-    tokens_col.delete_many({"license_key": license_key})
+    # ✅ Delete any existing token for same license + device (if any)
+    tokens_col.delete_many({"license_key": license_key, "device_id": device_id})
 
+    # ✅ Create new token
     token = str(uuid.uuid4())
     tokens_col.insert_one({
         "token": token,
         "license_key": license_key,
         "device_id": device_id,
-        "created_at": datetime.utcnow(),  # ✅ ISO UTC DateTime (required for TTL)
+        "created_at": datetime.utcnow(),  # For TTL deletion
         "used": False
     })
 
@@ -94,6 +94,6 @@ def solve_truecaptcha():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# ❌ Do not run app manually on Vercel
+# ❌ Don't manually run on Vercel
 # if __name__ == '__main__':
 #     app.run(port=5001, debug=True)
