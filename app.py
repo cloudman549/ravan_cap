@@ -1,9 +1,11 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pymongo import MongoClient
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 import requests
+import redis
+import json
 
 app = Flask(__name__)
 CORS(app)
@@ -15,13 +17,20 @@ db = client["license_db"]
 licenses_col = db["licenses"]
 tokens_col = db["tokens"]
 
-# ✅ MongoDB Indexing (only runs if not already present)
+# ✅ Indexing
 licenses_col.create_index("key")
 tokens_col.create_index("token")
+
+# ✅ Redis Upstash connection
+redis_client = redis.from_url(
+    "rediss://default:AVQfAAIjcDFjMDkzNTRhZTU0YTg0ZDRiOGViYTVjMjQwNTk3MmRlMnAxMA@integral-parakeet-21535.upstash.io:6379",
+    decode_responses=True
+)
 
 # ✅ TrueCaptcha credentials
 TRUECAPTCHA_USERID = "Cloudman"
 TRUECAPTCHA_APIKEY = "rWYgC77DnQ259l5eDSH6"
+
 
 @app.route('/generate-token', methods=['POST'])
 def generate_token():
@@ -32,20 +41,34 @@ def generate_token():
     if not license_key or not device_id:
         return jsonify({"success": False, "message": "Missing licenseKey or deviceId"}), 400
 
-    lic = licenses_col.find_one({"key": license_key})
-    if not lic:
-        return jsonify({"success": False, "message": "License key not found"}), 404
+    # Step 1: Try fetching license info from Redis
+    cached_license = redis_client.get(f"license:{license_key}")
+    if cached_license:
+        lic = json.loads(cached_license)
+    else:
+        # Step 2: If not in Redis, fetch from MongoDB and cache it
+        lic = licenses_col.find_one({"key": license_key})
+        if not lic:
+            return jsonify({"success": False, "message": "License key not found"}), 404
+
+        # Cache for 10 minutes in Redis
+        redis_client.setex(f"license:{license_key}", timedelta(minutes=10), json.dumps(lic, default=str))
+
+    # Step 3: Validate license
     if not lic.get("active", False):
         return jsonify({"success": False, "message": "License is deactivated"}), 403
     if not lic.get("paid", False):
         return jsonify({"success": False, "message": "License is unpaid"}), 403
-
     if lic.get("mac") not in ["", device_id]:
         return jsonify({"success": False, "message": "License bound to another device"}), 403
 
     if lic.get("mac", "") == "":
         licenses_col.update_one({"key": license_key}, {"$set": {"mac": device_id}})
+        # Update Redis cache also
+        lic["mac"] = device_id
+        redis_client.setex(f"license:{license_key}", timedelta(minutes=10), json.dumps(lic, default=str))
 
+    # Step 4: Create and store token in MongoDB
     token = str(uuid.uuid4())
     tokens_col.insert_one({
         "token": token,
@@ -56,6 +79,7 @@ def generate_token():
     })
 
     return jsonify({"success": True, "authToken": token}), 200
+
 
 @app.route('/solve-truecaptcha', methods=['POST'])
 def solve_truecaptcha():
