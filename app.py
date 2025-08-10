@@ -18,7 +18,7 @@ tokens_col = db["tokens"]
 # ✅ MongoDB Indexing
 licenses_col.create_index("key")
 tokens_col.create_index("token")
-tokens_col.create_index("created_at", expireAfterSeconds=121)  # TTL index for 2 mins
+tokens_col.create_index("created_at", expireAfterSeconds=120)  # TTL index for 2 mins
 
 # ✅ TrueCaptcha credentials
 TRUECAPTCHA_USERID = "Cloudman"
