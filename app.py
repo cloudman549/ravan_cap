@@ -94,4 +94,8 @@ def solve_truecaptcha():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-
+# ==========================
+# ✅ Run App
+# ==========================
+if __name__ == '__main__':
+    app.run(port=5001, debug=True)
